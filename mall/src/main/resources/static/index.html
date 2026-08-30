@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>電商購物中心</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+        .card { background: white; padding: 20px; margin-bottom: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        button { background-color: #4CAF50; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; }
+        button:disabled { background-color: #ccc; }
+        .form-group { margin-bottom: 10px; }
+        .form-group label { display: inline-block; width: 100px; }
+    </style>
+</head>
+<body>
+<div id="app">
+    <h2>🛍️ 電商購物中心平台</h2>
+
+    <!-- 1. 新增商品模組 -->
+    <div class="card">
+        <h3>新增商品</h3>
+        <div class="form-group">
+            <label>商品編號：</label>
+            <input v-model="newProduct.productId" placeholder="例: P004">
+        </div>
+        <div class="form-group">
+            <label>商品名稱：</label>
+            <input v-model="newProduct.productName" placeholder="例: iPad Air">
+        </div>
+        <div class="form-group">
+            <label>售價：</label>
+            <input type="number" v-model.number="newProduct.price" placeholder="19900">
+        </div>
+        <div class="form-group">
+            <label>庫存量：</label>
+            <input type="number" v-model.number="newProduct.quantity" placeholder="30">
+        </div>
+        <button @click="addProduct">新增商品</button>
+    </div>
+
+    <!-- 2. 購買與訂單模組 -->
+    <div class="card">
+        <h3>商品清單 (庫存 > 0)</h3>
+        <div class="form-group">
+            <label>會員編號：</label>
+            <input type="number" v-model.number="memberId" placeholder="輸入會員ID">
+        </div>
+        <table>
+            <thead>
+            <tr>
+                <th>選取</th>
+                <th>商品編號</th>
+                <th>商品名稱</th>
+                <th>單價</th>
+                <th>剩餘庫存</th>
+                <th>購買數量</th>
+                <th>小計</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr v-for="item in inStockProducts" :key="item.productId">
+                <td><input type="checkbox" v-model="item.selected"></td>
+                <td>{{ item.productId }}</td>
+                <td>{{ item.productName }}</td>
+                <td>${{ item.price }}</td>
+                <td>{{ item.quantity }}</td>
+                <td>
+                    <input type="number" v-model.number="item.buyQty" :min="1" :max="item.quantity" style="width: 60px;">
+                </td>
+                <td>${{ item.selected ? (item.price * (item.buyQty || 0)) : 0 }}</td>
+            </tr>
+            </tbody>
+        </table>
+
+        <h4 style="text-align: right; color: #d9534f;">訂單總金額：${{ totalPrice }}</h4>
+        <div style="text-align: right;">
+            <button @click="submitOrder" :disabled="!isOrderValid">建立訂單</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const { createApp, ref, computed, onMounted } = Vue;
+
+    createApp({
+        setup() {
+            const products = ref([]);
+            const memberId = ref(1001);
+            const newProduct = ref({ productId: '', productName: '', price: null, quantity: null });
+
+            // 抓取商品資料
+            const loadProducts = async () => {
+                try {
+                    // 對齊方案二：使用 http://localhost:8080/api/products
+                    const res = await axios.get('http://localhost:8080/api/products');
+
+                    // 相容性映射：同時支援 productId 與 product_id 命名
+                    products.value = res.data.map(p => ({
+                        productId: p.productId || p.product_id,
+                        productName: p.productName || p.product_name,
+                        price: p.price,
+                        quantity: p.quantity,
+                        selected: false,
+                        buyQty: 1
+                    }));
+                } catch (err) {
+                    alert('載入商品失敗：' + (err.response?.data?.message || err.message));
+                }
+            };
+
+            const inStockProducts = computed(() => products.value.filter(p => p.quantity > 0));
+
+            const totalPrice = computed(() => {
+                return inStockProducts.value
+                    .filter(p => p.selected)
+                    .reduce((sum, p) => sum + (p.price * (p.buyQty || 0)), 0);
+            });
+
+            const isOrderValid = computed(() => {
+                const selected = inStockProducts.value.filter(p => p.selected);
+                if (selected.length === 0 || !memberId.value) return false;
+                return selected.every(p => p.buyQty > 0 && p.buyQty <= p.quantity);
+            });
+
+            const addProduct = async () => {
+                if (!newProduct.value.productId || !newProduct.value.productName || !newProduct.value.price || !newProduct.value.quantity) {
+                    alert('請填寫完整商品資訊！');
+                    return;
+                }
+                try {
+                    await axios.post('http://localhost:8080/api/products', newProduct.value);
+                    alert('商品新增成功！');
+                    newProduct.value = { productId: '', productName: '', price: null, quantity: null };
+                    loadProducts();
+                } catch (err) {
+                    alert('新增失敗：' + (err.response?.data?.message || err.message));
+                }
+            };
+
+            const submitOrder = async () => {
+                const selectedItems = inStockProducts.value.filter(p => p.selected);
+                const orderData = {
+                    memberId: memberId.value,
+                    items: selectedItems.map(p => ({
+                        productId: p.productId,
+                        quantity: p.buyQty,
+                        standPrice: p.price
+                    }))
+                };
+
+                try {
+                    await axios.post('http://localhost:8080/api/orders', orderData);
+                    alert('🎉 訂單建立成功！庫存已扣除。');
+                    loadProducts();
+                } catch (err) {
+                    alert('建立訂單失敗：' + (err.response?.data?.message || err.message));
+                }
+            };
+
+            onMounted(loadProducts);
+
+            return { products, inStockProducts, memberId, newProduct, totalPrice, isOrderValid, addProduct, submitOrder };
+        }
+    }).mount('#app');
+</script>
+</body>
+</html>
